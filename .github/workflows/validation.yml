@@ -1,0 +1,71 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR branch, title and template
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          echo "Validating branch name..."
+          branch_pattern='^(feature|fix|chore|refactor|docs|test|perf)\/[a-z0-9._-]+$'
+          if ! echo "$BRANCH" | grep -Eq "$branch_pattern"; then
+            echo "❌ Invalid branch name: $BRANCH"
+            echo "   Expected: feature/<slug>, fix/<slug>, chore/<slug>, refactor/<slug>, docs/<slug>, test/<slug>, perf/<slug>"
+            exit 1
+          fi
+          echo "✅ Branch OK"
+
+          echo "Validating PR title..."
+          title_pattern='^(feat|fix|refactor|chore|docs|test|perf|build|ci)(\([a-z0-9._-]+\))?(!)?: .+'
+          if ! echo "$TITLE" | grep -Eq "$title_pattern"; then
+            echo "❌ Invalid PR title. Expected Conventional Commits:"
+            echo "   <type>(optional-scope)!: <description>"
+            exit 1
+          fi
+          echo "✅ Title OK"
+
+          echo "Validating PR body..."
+          if [ -z "${BODY:-}" ]; then
+            echo "❌ PR body is empty. The PR template must be filled."
+            exit 1
+          fi
+
+          if ! printf "%s\n" "$BODY" | grep -Eq '^\s*##\s+Summary\s*$'; then
+            echo "❌ Missing required section: ## Summary"
+            exit 1
+          fi
+
+          summary="$(printf "%s\n" "$BODY" | awk '
+            $0 ~ /^[[:space:]]*##[[:space:]]+Summary[[:space:]]*$/ {found=1; next}
+            found && $0 ~ /^[[:space:]]*##[[:space:]]+/ {exit}
+            found {print}
+          ')"
+
+          summary_trimmed="$(printf "%s" "$summary" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' )"
+
+          if [ -z "$summary_trimmed" ]; then
+            echo "❌ Summary section is empty."
+            exit 1
+          fi
+
+          required_checkbox='- \[x\] All new or modified code is properly tested and documented'
+          if ! printf "%s\n" "$BODY" | grep -Eiq "^\s*${required_checkbox}\s*$"; then
+            echo "❌ The following checklist item must be checked:"
+            echo "   - [x] All new or modified code is properly tested and documented"
+            exit 1
+          fi
+
+          echo "✅ PR conventions OK"
